@@ -1,13 +1,32 @@
 use notify_rust::{Notification, Timeout};
-use nu_plugin::{self, EvaluatedCall, LabeledError};
-use nu_protocol::{Category, PluginSignature, SyntaxShape, Value};
+use nu_plugin::{self, serve_plugin, EvaluatedCall, MsgPackSerializer};
+use nu_plugin::{EngineInterface, Plugin, PluginCommand, SimplePluginCommand};
+use nu_protocol::{Category, LabeledError, Signature, SyntaxShape, Value};
 use std::time::Duration;
 
-pub struct Plugin;
+struct DesktopNotificationPlugin;
 
-impl nu_plugin::Plugin for Plugin {
-    fn signature(&self) -> Vec<PluginSignature> {
-        vec![PluginSignature::build("notify")
+impl Plugin for DesktopNotificationPlugin {
+    fn commands(&self) -> Vec<Box<dyn PluginCommand<Plugin = Self>>> {
+        vec![Box::new(DesktopNotification)]
+    }
+}
+
+struct DesktopNotification;
+
+impl SimplePluginCommand for DesktopNotification {
+    type Plugin = DesktopNotificationPlugin;
+
+    fn name(&self) -> &str {
+        "notify"
+    }
+
+    fn usage(&self) -> &str {
+        "sends notification with given parameters"
+    }
+
+    fn signature(&self) -> Signature {
+        Signature::build(PluginCommand::name(self))
             .named(
                 "summary",
                 SyntaxShape::String,
@@ -44,20 +63,15 @@ impl nu_plugin::Plugin for Plugin {
                 "duration of the notification [XDG Desktops only] (defaults to system default)",
                 None,
             )
-            .named(
-                "crash-on-error",
-                SyntaxShape::Filepath,
-                "returns notification error if encountered",
-                None,
-            )
-            .usage("sends notification with given parameters")
-            .category(Category::Experimental)]
+            
+            .usage(PluginCommand::usage(self))
+            .category(Category::Experimental)
     }
 
     fn run(
-        &mut self,
-        _name: &str,
-        _config: &Option<Value>,
+        &self,
+        _plugin: &DesktopNotificationPlugin,
+        _engine: &EngineInterface,
         call: &EvaluatedCall,
         input: &Value,
     ) -> Result<Value, LabeledError> {
@@ -92,26 +106,33 @@ impl nu_plugin::Plugin for Plugin {
                 Err(_) => {}
             }
         }
-
+        
         match notification.show() {
             Ok(_) => Ok(input.clone()),
             Err(err) => {
-                if let Ok(true) = call.has_flag("crash-on-error") {
-                    return Err(LabeledError {
-                        label: "Notification Exception".to_string(),
-                        msg: err.to_string(),
-                        span: Some(call.head),
-                    });
-                }
-                Ok(input.clone())
+                return Err(LabeledError::new(err.to_string()).with_label(
+                    "Notification Exception".to_string(),
+                    call.head))
             }
         }
+        
+        /* let span = input.span();
+        match input {
+            Value::String { val, .. } => Ok(Value::int(val.len() as i64, span)),
+            _ => Err(
+                LabeledError::new("Expected String input from pipeline").with_label(
+                    format!("requires string input; got {}", input.get_type()),
+                    call.head,
+                ),
+            ),
+        } */
     }
 }
 
 fn main() {
-    nu_plugin::serve_plugin(&mut Plugin {}, nu_plugin::MsgPackSerializer {})
+    serve_plugin(&DesktopNotificationPlugin, MsgPackSerializer)
 }
+
 pub fn load_string(call: &EvaluatedCall, name: &str) -> Option<String> {
     let value = call.get_flag_value(name);
     match value {
